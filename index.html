@@ -841,6 +841,7 @@ function toast(msg){
   toast._t=setTimeout(()=>t.classList.remove('show'),2200);
 }
 
+const APP_VERSION = 'v2026.09.16-1';   // bump on every release
 const LS_PREFIX = 'mgspanel:';
 function hasCloudStorage(){
   return typeof window.storage !== 'undefined' && window.storage && typeof window.storage.set === 'function' && typeof window.storage.get === 'function';
@@ -5071,6 +5072,9 @@ function openBackupModal(){
     <div style="font-size:10.5px;color:#8a8f80;margin-top:4px;line-height:1.45;">
       İşaretlemezsen yedekteki kayıtlar mevcutların üzerine eklenir. Temiz bir kurulum
       (yeni tablet) için işaretlemene gerek yok.
+    </div>
+    <div style="font-family:'JetBrains Mono';font-size:10.5px;color:#8a8f80;margin-top:10px;">
+      Sürüm: <b id="bkVersion">${APP_VERSION}</b>
     </div>
     <div class="lib-sec-title">3. Veri kontrolü</div>
     <button class="btn" id="bkCheckBtn" style="width:100%;">🔍 Çizimler bu cihazda var mı?</button>
