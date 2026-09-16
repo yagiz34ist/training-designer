@@ -949,10 +949,15 @@ function fixVNotation(s){
 }
 function normalizeSectionTitle(s){ return fixVNotation(trUpper(s)); }
 function trLower(s){ return (s||'').toString().toLocaleLowerCase('tr-TR'); }
+/* Keeps the name exactly as it was typed. It used to lowercase everything after
+   the first letter, which wrecked abbreviations ("Manisa FK" -> "Manisa fk").
+   Only a fully lower-case entry gets its first letter capitalised, so quick
+   typing still looks tidy without touching deliberate capitals. */
 function capFirstOnly(s){
   s = (s||'').toString();
   if(!s) return '';
-  return trUpper(s[0]) + trLower(s.slice(1));
+  const hasUpper = s !== trLower(s);
+  return hasUpper ? s : trUpper(s[0]) + s.slice(1);
 }
 function matchResultClass(m){
   if(!m.score) return '';
