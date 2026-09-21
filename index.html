@@ -521,7 +521,16 @@ input,select,textarea{font-family:'Work Sans',sans-serif;}
 
 .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,0.55);display:none;align-items:center;justify-content:center;z-index:60;}
 .modal-bg.show{display:flex;}
-.modal{background:var(--paper);color:var(--ink);border-radius:12px;padding:20px;width:320px;}
+.modal{background:var(--paper);color:var(--ink);border-radius:12px;padding:20px;width:320px;
+  /* Never taller than the screen: the title and the Vazgeç/Tamam row stay put
+     and only the body scrolls, so long forms (e.g. a double-session day) stay
+     usable with the mouse wheel, trackpad or touch. */
+  max-height:calc(100vh - 32px);max-height:calc(100dvh - 32px);
+  display:flex;flex-direction:column;box-sizing:border-box;}
+.modal > h3{flex-shrink:0;}
+.modal > .row{flex-shrink:0;padding-top:12px;margin-top:4px;border-top:1px solid #e4e0d2;}
+#modalBody{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;margin-right:-8px;padding-right:8px;}
 .modal.modal-wide{width:520px;max-width:92vw;}
 .modal.modal-wide input,.modal.modal-wide select{padding:11px 12px;font-size:14px;}
 .modal.modal-wide .training-row input{padding:9px 6px;font-size:13px;text-align:center;}
@@ -863,7 +872,7 @@ function toast(msg){
   toast._t=setTimeout(()=>t.classList.remove('show'),2200);
 }
 
-const APP_VERSION = 'v2026.09.21-2';   // bump on every release
+const APP_VERSION = 'v2026.09.21-3';   // bump on every release
 const LS_PREFIX = 'mgspanel:';
 function hasCloudStorage(){
   return typeof window.storage !== 'undefined' && window.storage && typeof window.storage.set === 'function' && typeof window.storage.get === 'function';
