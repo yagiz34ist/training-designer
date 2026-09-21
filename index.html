@@ -114,6 +114,10 @@ input,select,textarea{font-family:'Work Sans',sans-serif;}
 .pdfm-row.prep{font-style:italic;color:#5c6057;}
 .pdfm-row.prep.on{color:var(--ink);}
 .pdfm-note{font-size:10.5px;color:#8a8f80;margin-top:8px;}
+.sync-status{font-size:12px;margin-left:4px;opacity:.8;cursor:default;white-space:nowrap;}
+.sync-status.sync-err{color:#ff8a8a;opacity:1;}
+.sync-status.sync-pending,.sync-status.sync-busy{opacity:.55;}
+.sync-box{border:1px solid #cfe0f7;background:#f5f9ff;border-radius:8px;padding:10px;}
 .sess-switch{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;}
 .sess-btn{border:none;background:transparent;color:var(--chalk);padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer;opacity:.6;}
 .sess-btn.active{background:rgba(74,143,226,.22);color:#9cc3ff;opacity:1;}
@@ -562,7 +566,8 @@ input,select,textarea{font-family:'Work Sans',sans-serif;}
         <span lang="en">Training Designer</span>
       </div>
       <button class="icon-btn" id="editBrandBtn" title="Kulüp adını ve logosunu düzenle" style="margin-left:6px;opacity:.6;">✎</button>
-      <button class="icon-btn" id="backupBtn" title="Yedekle / Geri Yükle (cihaz değiştirmek için)" style="margin-left:2px;opacity:.6;">💾</button>
+      <button class="icon-btn" id="backupBtn" title="Yedekle / Geri Yükle / Senkronizasyon" style="margin-left:2px;opacity:.6;">💾</button>
+      <span id="syncStatus" class="sync-status" style="display:none;"></span>
     </div>
     <div class="tabs">
       <button class="tab-btn active" data-tab="program">Günlük Program</button>
@@ -882,7 +887,7 @@ function toast(msg){
   toast._t=setTimeout(()=>t.classList.remove('show'),2200);
 }
 
-const APP_VERSION = 'v2026.09.21-4';   // bump on every release
+const APP_VERSION = 'v2026.09.21-5';   // bump on every release
 const LS_PREFIX = 'mgspanel:';
 function hasCloudStorage(){
   return typeof window.storage !== 'undefined' && window.storage && typeof window.storage.set === 'function' && typeof window.storage.get === 'function';
@@ -907,6 +912,7 @@ async function storeSet(key, val, silent){
       try{
         await window.storage.set(key, payload, false);
         try{ window.localStorage.setItem(LS_PREFIX+key, payload); }catch(e){}
+        syncNoteChange();
         return true;
       }catch(e){
         if(attempt<2){ await new Promise(r=>setTimeout(r, 400*(attempt+1))); continue; }
@@ -916,6 +922,7 @@ async function storeSet(key, val, silent){
   }
   try{
     window.localStorage.setItem(LS_PREFIX+key, payload);
+    syncNoteChange();
     return true;
   }catch(e2){
     console.error('local storage set failed', e2);
@@ -928,8 +935,187 @@ async function storeDelete(key){
     try{ await window.storage.delete(key,false); }catch(e){}
   }
   try{ window.localStorage.removeItem(LS_PREFIX+key); }catch(e){}
+  syncNoteChange();
 }
 const _saveTimers = {};
+
+/* ================= Cloud sync via a private GitHub Gist =================
+   All the app's data is packed into one JSON file inside a secret gist on the
+   user's own GitHub account. Every device holds the same access token; each
+   change is pushed a few seconds after it happens, and a device pulls the
+   newest copy when it opens or comes back to the foreground.
+   The token and sync bookkeeping use their own prefix, so they are never
+   included in backups or in the synced data itself. */
+const SYNC = {
+  TOKEN:'mgssync:token', GIST:'mgssync:gist', LAST:'mgssync:last', DIRTY:'mgssync:dirty',
+  FILE:'muglaspor-panel.json', DESC:'Muğlaspor Antrenman Paneli — senkron verisi (otomatik)',
+  applying:false, pushTimer:null, busy:false
+};
+const syncGet = k => { try{ return window.localStorage.getItem(k); }catch(e){ return null; } };
+const syncSet = (k,v) => { try{ if(v==null) window.localStorage.removeItem(k); else window.localStorage.setItem(k, String(v)); }catch(e){} };
+function syncConfigured(){ return !!syncGet(SYNC.TOKEN); }
+
+function syncNoteChange(){
+  if(SYNC.applying || !syncConfigured()) return;
+  syncSet(SYNC.DIRTY, '1');
+  setSyncStatus('pending');
+  clearTimeout(SYNC.pushTimer);
+  SYNC.pushTimer = setTimeout(()=>{ pushSync(); }, 4000);
+}
+
+function setSyncStatus(st, msg){
+  const el = document.getElementById('syncStatus');
+  if(!el) return;
+  if(!syncConfigured()){ el.style.display = 'none'; return; }
+  el.style.display = '';
+  const map = { ok:['☁️','Senkronize — tüm cihazlar güncel'], pending:['☁️…','Değişiklikler buluta gönderilecek'],
+                busy:['☁️⟳','Senkronize ediliyor…'], err:['☁️⚠','Senkron hatası'] };
+  const m = map[st] || map.ok;
+  el.textContent = m[0];
+  el.title = msg || m[1];
+  el.className = 'sync-status sync-'+st;
+}
+
+async function ghApi(path, opts){
+  const token = syncGet(SYNC.TOKEN);
+  const res = await fetch('https://api.github.com'+path, Object.assign({}, opts, {
+    headers: Object.assign({
+      'Accept':'application/vnd.github+json',
+      'Authorization':'Bearer '+token,
+      'X-GitHub-Api-Version':'2022-11-28'
+    }, (opts&&opts.body)?{'Content-Type':'application/json'}:{})
+  }));
+  if(!res.ok){
+    let detail=''; try{ detail = (await res.json()).message || ''; }catch(e){}
+    const err = new Error('GitHub '+res.status+(detail?(': '+detail):''));
+    err.status = res.status; throw err;
+  }
+  return res.status===204 ? null : res.json();
+}
+
+async function buildSyncPayload(){
+  const data = {};
+  for(const k of collectBackupKeys()){
+    const v = await storeGet(k, undefined);
+    if(v !== undefined) data[k] = v;
+  }
+  return { _format:'muglaspor-antrenman-paneli', _version:1, updatedAt: Date.now(), data };
+}
+
+async function findSyncGist(){
+  const known = syncGet(SYNC.GIST);
+  if(known) return known;
+  for(let page=1; page<=5; page++){
+    const list = await ghApi('/gists?per_page=100&page='+page);
+    const hit = (list||[]).find(g=>g.files && g.files[SYNC.FILE]);
+    if(hit){ syncSet(SYNC.GIST, hit.id); return hit.id; }
+    if(!list || list.length<100) break;
+  }
+  return null;
+}
+
+async function fetchRemote(){
+  const id = await findSyncGist();
+  if(!id) return null;
+  const g = await ghApi('/gists/'+id);
+  const f = g.files && g.files[SYNC.FILE];
+  if(!f) return null;
+  let text = f.content;
+  if(f.truncated){                       // large payloads: fetch the raw file
+    const r = await fetch(f.raw_url);
+    text = await r.text();
+  }
+  try{ return JSON.parse(text); }catch(e){ return null; }
+}
+
+async function pushSync(){
+  if(!syncConfigured() || SYNC.busy) return;
+  SYNC.busy = true; setSyncStatus('busy');
+  try{
+    const payload = await buildSyncPayload();
+    const body = JSON.stringify(payload);
+    if(body.length > 9_000_000){
+      setSyncStatus('err', 'Veri çok büyük (videolar?) — bilgisayardan yüklenen videoları bağlantıyla değiştir');
+      return;
+    }
+    const files = {}; files[SYNC.FILE] = { content: body };
+    let id = await findSyncGist();
+    if(id){
+      await ghApi('/gists/'+id, { method:'PATCH', body: JSON.stringify({ files }) });
+    } else {
+      const g = await ghApi('/gists', { method:'POST', body: JSON.stringify({ description:SYNC.DESC, public:false, files }) });
+      syncSet(SYNC.GIST, g.id);
+    }
+    syncSet(SYNC.LAST, payload.updatedAt);
+    syncSet(SYNC.DIRTY, null);
+    setSyncStatus('ok');
+  }catch(e){
+    console.error('sync push failed', e);
+    setSyncStatus('err', 'Buluta gönderilemedi: '+e.message);
+  }finally{
+    SYNC.busy = false;
+    if(syncGet(SYNC.DIRTY)==='1' && !SYNC.pushTimer) SYNC.pushTimer = setTimeout(pushSync, 4000);
+  }
+}
+
+/* Replace this device's data with the cloud copy. */
+async function applyRemote(remote){
+  SYNC.applying = true;
+  try{
+    const keep = new Set(Object.keys(remote.data||{}));
+    const old = [];
+    for(let i=0;i<window.localStorage.length;i++){
+      const raw = window.localStorage.key(i);
+      if(raw && raw.startsWith(LS_PREFIX)) old.push(raw.slice(LS_PREFIX.length));
+    }
+    for(const k of old) if(!keep.has(k)) await storeDelete(k);
+    for(const [k,v] of Object.entries(remote.data||{})) await storeSet(k, v, true);
+    syncSet(SYNC.LAST, remote.updatedAt);
+    syncSet(SYNC.DIRTY, null);
+  } finally { SYNC.applying = false; }
+}
+
+/* Returns true when this device's data was replaced by a newer cloud copy. */
+async function pullSync(opts){
+  opts = opts || {};
+  if(!syncConfigured() || SYNC.busy) return false;
+  SYNC.busy = true; setSyncStatus('busy');
+  try{
+    const remote = await fetchRemote();
+    const last = parseInt(syncGet(SYNC.LAST)||'0',10);
+    if(!remote || !remote.updatedAt || remote.updatedAt <= last){
+      setSyncStatus(syncGet(SYNC.DIRTY)==='1' ? 'pending' : 'ok');
+      return false;
+    }
+    if(syncGet(SYNC.DIRTY)==='1'){
+      // Both sides changed since the last sync — let the coach choose.
+      const when = new Date(remote.updatedAt).toLocaleString('tr-TR');
+      const useCloud = window.confirm(
+        'Bu cihazda henüz buluta gönderilmemiş değişiklikler var, ama bulutta da daha yeni bir kayıt ('+when+') bulunuyor.\n\n'+
+        'TAMAM → Buluttakini kullan (bu cihazdaki son değişiklikler silinir)\n'+
+        'İPTAL → Bu cihazdakini koru ve buluta gönder');
+      if(!useCloud){ SYNC.busy=false; await pushSync(); return false; }
+    }
+    await applyRemote(remote);
+    setSyncStatus('ok');
+    return true;
+  }catch(e){
+    console.error('sync pull failed', e);
+    setSyncStatus('err', 'Buluttan alınamadı: '+e.message);
+    return false;
+  }finally{ SYNC.busy = false; }
+}
+
+/* Coming back to the app (switching tabs/apps, unlocking the iPad) is the
+   natural moment to pick up changes made on the other device. */
+document.addEventListener('visibilitychange', async ()=>{
+  if(!syncConfigured()) return;
+  if(document.visibilityState==='hidden'){
+    if(syncGet(SYNC.DIRTY)==='1'){ clearTimeout(SYNC.pushTimer); SYNC.pushTimer=null; pushSync(); }
+    return;
+  }
+  if(await pullSync()) window.location.reload();
+});
 function debouncedSave(key, getVal, delay){
   clearTimeout(_saveTimers[key]);
   _saveTimers[key] = setTimeout(()=>{ storeSet(key, getVal(), true); }, delay||700);
@@ -1598,6 +1784,9 @@ let state = {
 
 /* ================= INIT ================= */
 async function init(){
+  // Newest cloud data first, so the app starts from the up-to-date copy.
+  if(syncConfigured()){ try{ await pullSync(); }catch(e){} }
+  setSyncStatus(syncGet(SYNC.DIRTY)==='1' ? 'pending' : 'ok');
   document.getElementById('topDate').value = state.program.date;
   const savedName = await storeGet('clubName', null);
   const savedLogo = await storeGet('clubLogo', null);
@@ -5226,8 +5415,65 @@ async function showDataCheck(){
   box.innerHTML = html;
 }
 
+function syncPanelHtml(){
+  if(syncConfigured()){
+    const last = parseInt(syncGet(SYNC.LAST)||'0',10);
+    return `<div class="sync-box">
+      <div style="font-size:12.5px;color:var(--ink);font-weight:600;">✅ Otomatik senkronizasyon açık</div>
+      <div style="font-size:11px;color:#6b6f63;margin-top:3px;line-height:1.45;">
+        Değişiklikler birkaç saniye içinde buluta gider; diğer cihaz açılınca ya da uygulamaya
+        geri dönülünce güncel hâli çeker.<br>Son senkron: <b>${last?new Date(last).toLocaleString('tr-TR'):'—'}</b>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:8px;">
+        <button class="btn small primary" id="syNowBtn" style="flex:1;">⟳ Şimdi senkronize et</button>
+        <button class="btn small" id="syOffBtn">Bağlantıyı kes</button>
+      </div>
+    </div>`;
+  }
+  return `<div class="sync-box">
+    <div style="font-size:12px;color:var(--ink);line-height:1.5;">
+      Bilgisayar ve iPad'in aynı verileri <b>otomatik</b> görmesi için, her iki cihazda da
+      bir kez GitHub erişim anahtarını buraya yapıştır. Anahtarın nasıl alınacağı sohbette anlatıldı.
+    </div>
+    <input id="syToken" type="password" placeholder="ghp_… ile başlayan anahtar" autocomplete="off" style="margin-top:8px;">
+    <button class="btn small primary" id="syConnectBtn" style="width:100%;">☁️ Bağlan</button>
+    <div id="syMsg" style="font-size:11px;margin-top:6px;color:#6b6f63;"></div>
+  </div>`;
+}
+
+async function connectSync(){
+  const token = (document.getElementById('syToken').value||'').trim();
+  const msg = document.getElementById('syMsg');
+  if(!token){ msg.textContent = 'Önce anahtarı yapıştır.'; return; }
+  syncSet(SYNC.TOKEN, token);
+  syncSet(SYNC.GIST, null); syncSet(SYNC.LAST, null); syncSet(SYNC.DIRTY, null);
+  msg.textContent = 'Bağlanılıyor…';
+  try{
+    await ghApi('/user');                       // validates the token
+    const remote = await fetchRemote();
+    if(remote && remote.data){
+      // Cloud already has data (set up on the other device): take it.
+      const when = new Date(remote.updatedAt).toLocaleString('tr-TR');
+      const ok = window.confirm('Bulutta '+when+' tarihli kayıtlı veriler bulundu.\n\n'+
+        'TAMAM → Bu cihaza buluttaki verileri yükle (önerilen)\n'+
+        'İPTAL → Bu cihazdaki verileri buluta gönder (buluttakinin yerine geçer)');
+      if(ok){ await applyRemote(remote); toast('Bulut verileri yüklendi — yenileniyor…'); setTimeout(()=>location.reload(), 600); return; }
+    }
+    await pushSync();
+    closeModal();
+    toast('Senkronizasyon açıldı ✓');
+  }catch(e){
+    syncSet(SYNC.TOKEN, null);
+    msg.innerHTML = '<span style="color:#b34747;">Bağlanılamadı: '+escapeHtml(e.message)+'.</span> Anahtarı ve “gist” yetkisini kontrol et.';
+    setSyncStatus('ok');
+  }
+}
+
 function openBackupModal(){
-  openModal('Yedekle / Geri Yükle', `
+  openModal('Yedekle / Geri Yükle / Senkronizasyon', `
+    <div class="lib-sec-title" style="margin-top:0;">☁️ Cihazlar arası otomatik senkron</div>
+    ${syncPanelHtml()}
+    <div class="lib-sec-title">Manuel yedek</div>
     <div style="font-size:12px;color:#6b6f63;line-height:1.5;margin-bottom:12px;">
       Tüm veriler (çizimler, kütüphane, kadro, takvim, program arşivi) bu tarayıcının
       kendi hafızasında tutulur. Başka bir cihaza geçerken <b>dosyayı kopyalamak yeterli değildir</b>;
@@ -5257,6 +5503,21 @@ function openBackupModal(){
   `, async ()=>{});
 
   document.getElementById('bkCheckBtn').addEventListener('click', showDataCheck);
+  const syC = document.getElementById('syConnectBtn');
+  if(syC) syC.addEventListener('click', connectSync);
+  const syN = document.getElementById('syNowBtn');
+  if(syN) syN.addEventListener('click', async ()=>{
+    closeModal();
+    if(syncGet(SYNC.DIRTY)==='1'){ await pushSync(); toast('Buluta gönderildi ✓'); return; }
+    if(await pullSync()){ toast('Güncel veriler alındı — yenileniyor…'); setTimeout(()=>location.reload(), 500); }
+    else { await pushSync(); toast('Zaten güncel ✓'); }
+  });
+  const syO = document.getElementById('syOffBtn');
+  if(syO) syO.addEventListener('click', ()=>{
+    [SYNC.TOKEN,SYNC.GIST,SYNC.LAST,SYNC.DIRTY].forEach(k=>syncSet(k,null));
+    setSyncStatus('ok'); closeModal();
+    toast('Bu cihazın senkron bağlantısı kesildi (veriler cihazda duruyor)');
+  });
 
   document.getElementById('bkExportBtn').addEventListener('click', exportBackup);
   document.getElementById('bkFile').addEventListener('change', async (e)=>{
