@@ -394,6 +394,34 @@ input,select,textarea{font-family:'Work Sans',sans-serif;}
 .cal-travel-icon{font-size:26px;line-height:1;margin-bottom:4px;}
 .cal-off{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;text-align:center;}
 .cal-off-label{font-family:'Oswald';font-size:22px;font-weight:800;letter-spacing:.05em;color:#a9761f;line-height:1.1;}
+/* ---- Tablet / narrow-screen calendar ----
+   Applies ONLY on screens up to iPad size (and touch screens up to iPad Pro),
+   never in print — the desktop layout and the PDF export are untouched.
+   Cells get a guaranteed minimum width (the grid scrolls sideways instead of
+   squeezing, which is what made text spill out on iPad in portrait), grow in
+   height with their content instead of keeping a fixed ratio, and the oversized
+   bits are scaled to the smaller cell. */
+@media screen and (max-width: 1280px), screen and (pointer: coarse) and (max-width: 1400px){
+  #calendarView{padding:12px;}
+  .calendar-scroll{padding:6px 12px 16px;overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  .cal-weekday-header,.cal-grid{min-width:calc(7 * 128px + 6 * 5px);}
+  .cal-month-title{left:0;}
+  .cal-cell{aspect-ratio:auto;min-height:190px;overflow:hidden;padding:7px;display:flex;flex-direction:column;}
+  .cal-cell.empty{min-height:0;}
+  .cal-cell-body{height:auto;flex:1;min-height:0;}
+  .cal-cell-add{opacity:.55;}                       /* no hover on touch */
+  .cal-tag{font-size:11px;padding:3px 6px;border-radius:6px;}
+  .cal-off-label{font-size:17px;}
+  .cal-travel-icon{font-size:21px;}
+  .cmb-names{font-size:11.5px;overflow-wrap:anywhere;}
+  .cmb-emoji{font-size:17px;}
+  .cmb-score{font-size:14px;}
+  .ct-row{font-size:10px;padding:2px 4px;}
+  .ct-title{overflow-wrap:anywhere;}
+  .ct-tact{white-space:normal;overflow-wrap:anywhere;}
+  .ct-metrics{white-space:normal;}
+  .ct-themes{margin-top:6px;}
+}
 .daytype-tabs{display:flex;gap:6px;margin-bottom:12px;}
 .daytype-tab{flex:1;border:2px solid #e4e0d2;background:#fff;border-radius:8px;padding:8px 4px;font-size:11px;font-weight:600;color:#6b6f63;line-height:1.7;cursor:pointer;text-align:center;}
 .daytype-tab.active{border-color:var(--grass-deep);background:rgba(63,174,108,0.1);color:var(--ink);}
@@ -887,7 +915,7 @@ function toast(msg){
   toast._t=setTimeout(()=>t.classList.remove('show'),2200);
 }
 
-const APP_VERSION = 'v2026.09.21-5';   // bump on every release
+const APP_VERSION = 'v2026.09.22-1';   // bump on every release
 const LS_PREFIX = 'mgspanel:';
 function hasCloudStorage(){
   return typeof window.storage !== 'undefined' && window.storage && typeof window.storage.set === 'function' && typeof window.storage.get === 'function';
