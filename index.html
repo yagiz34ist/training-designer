@@ -915,7 +915,7 @@ function toast(msg){
   toast._t=setTimeout(()=>t.classList.remove('show'),2200);
 }
 
-const APP_VERSION = 'v2026.09.22-1';   // bump on every release
+const APP_VERSION = 'v2026.09.22-2';   // bump on every release
 const LS_PREFIX = 'mgspanel:';
 function hasCloudStorage(){
   return typeof window.storage !== 'undefined' && window.storage && typeof window.storage.set === 'function' && typeof window.storage.get === 'function';
@@ -1730,7 +1730,7 @@ function openDayModal(dateStr){
 }
 
 const DEFAULT_TEMPLATE = {
-  taktikselTema:'Savunma', fizikselTema:'cdeF', toplamSure:"60'", isinmaSure:'',
+  taktikselTema:'Savunma', fizikselTema:'cdeF', toplamSure:"60'", isinmaSure:'', isinmaTitle:'',
   dayStatus:{},
   rosterTeamIds:[],
   sections:[
@@ -1923,6 +1923,9 @@ function stripIsinmaSection(prog){
   while((idx = prog.sections.findIndex(s=>isIsinmaTitle(s.title))) !== -1){
     const isinma = prog.sections[idx];
     if(isinma.sure) prog.isinmaSure = isinma.sure;
+    // Remember what it was actually called ("Isınma + 5v2"), so the plan list
+    // can show the calendar's own wording instead of a hard-coded "Isınma".
+    if(isinma.title) prog.isinmaTitle = isinma.title;
     prog.sections.splice(idx,1);
   }
 }
@@ -1955,7 +1958,10 @@ function reconcileSectionsWithCalendar(){
   if(!active.length) return false;
 
   const isinma = active.find(s=>isIsinmaTitle(s.title));
-  if(isinma) state.program.isinmaSure = (isinma.sets?isinma.sets+'x':'')+isinma.duration+"'";
+  if(isinma){
+    state.program.isinmaSure = (isinma.sets?isinma.sets+'x':'')+isinma.duration+"'";
+    state.program.isinmaTitle = isinma.title || 'Isınma';
+  }
   const rest = active.filter(s=>s!==isinma);
 
   const old = (state.program.sections||[]).slice();
@@ -2050,7 +2056,10 @@ function renderPlanList(){
   const list = document.getElementById('ppPlanList');
   if(!list) return;
   const items = [];
-  if(state.program.isinmaSure) items.push(`<div class="pp-plan-item">Isınma (${escapeHtml(state.program.isinmaSure)})</div>`);
+  if(state.program.isinmaSure){
+    const wu = fixVNotation(state.program.isinmaTitle || 'Isınma');
+    items.push(`<div class="pp-plan-item">${escapeHtml(wu)} (${escapeHtml(state.program.isinmaSure)})</div>`);
+  }
   state.program.sections.forEach(s=>{
     const label = fixVNotation(s.title || 'Bölüm');
     const sure = s.sure ? ` (${escapeHtml(s.sure)})` : '';
@@ -2706,8 +2715,11 @@ function syncProgramFromCalendar(date){
   if(!info || info.type!=='training' || !info.sections) return false;
   const activeSections = info.sections.filter(s=>s.duration>0);
   if(!activeSections.length) return false;
-  const isinma = activeSections.find(s=>trLower(s.title||'').trim()==='ısınma' || trLower(s.title||'').trim()==='isınma');
-  if(isinma) state.program.isinmaSure = (isinma.sets?isinma.sets+'x':'')+isinma.duration+"'";
+  const isinma = activeSections.find(s=>isIsinmaTitle(s.title));
+  if(isinma){
+    state.program.isinmaSure = (isinma.sets?isinma.sets+'x':'')+isinma.duration+"'";
+    state.program.isinmaTitle = isinma.title || 'Isınma';
+  }
   state.program.sections = activeSections.filter(s=>s!==isinma).map(s=>({
     title: s.title,
     alan: '',
