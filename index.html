@@ -370,11 +370,17 @@ input,select,textarea{font-family:'Work Sans',sans-serif;}
 .tr-session-head{font-family:'Oswald';font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#2e6ff2;margin-bottom:6px;}
 /* Double session: two stacked halves with a clear divider. */
 .ct-double{flex:1;min-height:0;display:flex;flex-direction:column;gap:4px;}
-.ct-half{flex:1;min-height:0;display:flex;flex-direction:column;gap:3px;}
+/* The morning block is sized by its own content (flex:0 1 auto) rather than
+   taking half the cell, so a short morning session leaves the remaining space
+   to the evening one instead of splitting the box down the middle. */
+.ct-half{flex:0 1 auto;min-height:0;display:flex;flex-direction:column;gap:3px;}
+.ct-half:last-child{flex:1 1 auto;}
+.ct-half .cal-training{flex:0 1 auto;}
+.ct-half:last-child .cal-training{flex:1 1 auto;}
 .ct-half + .ct-half{border-top:1.5px solid #4a8fe2;padding-top:4px;}
 .ct-half-label{font-family:'Oswald';font-size:9.5px;font-weight:700;letter-spacing:.08em;color:#2e6ff2;}
 .ct-half .cal-training{gap:4px;}
-.ct-half .ct-total{font-size:9px;padding-top:2px;}
+.ct-half .ct-total{font-size:9px;padding-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .ct-empty{font-size:10px;color:#8b8f80;text-align:center;}
 .cal-print-area .ct-half-label{font-size:10.5px;}
 .ct-metrics{font-family:'JetBrains Mono';font-size:9px;font-weight:700;color:#8a5a12;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center;}
@@ -915,7 +921,7 @@ function toast(msg){
   toast._t=setTimeout(()=>t.classList.remove('show'),2200);
 }
 
-const APP_VERSION = 'v2026.09.22-3';   // bump on every release
+const APP_VERSION = 'v2026.09.22-4';   // bump on every release
 const LS_PREFIX = 'mgspanel:';
 function hasCloudStorage(){
   return typeof window.storage !== 'undefined' && window.storage && typeof window.storage.set === 'function' && typeof window.storage.get === 'function';
@@ -1257,7 +1263,7 @@ function computeSectionMinutes(s){
   const restCount = Math.max(0, sets-1);
   return sets*(s.duration||0) + restCount*(s.rest||0);
 }
-function compactTrainingHtml(info){
+function compactTrainingHtml(info, opts){
   const sections = ((info&&info.sections)||[]).filter(s=>s.duration>0);
   const physical = info&&info.physical;
   const tactical = info&&info.tactical;
@@ -1273,7 +1279,7 @@ function compactTrainingHtml(info){
     ${hasMetrics?`<div class="ct-metrics">${metrics.join(' · ')}</div>`:''}
     ${hasThemes?`<div class="ct-themes">${physical?`<span class="ct-phys">${formatPhysicalTheme(physical)}</span>`:''}${tactical?`<span class="ct-tact">${escapeHtml(tactical)}</span>`:''}</div>`:''}
     <div class="cal-training-rows">${sections.map(s=>`<div class="ct-row"><span class="ct-title">${escapeHtml(s.title)} - ${s.sets?s.sets+'x':''}${fmtMin(s.duration)}'</span>${s.rest?`<span class="ct-rest">r:${fmtMin(s.rest)}'</span>`:''}</div>`).join('')}</div>
-    ${totalMin>0?`<div class="ct-total">Toplam Süre: ${fmtMin(totalMin)} dk</div>`:''}
+    ${totalMin>0?`<div class="ct-total" title="Toplam süre">${(opts&&opts.shortTotal)?'':'Toplam Süre: '}${fmtMin(totalMin)} dk</div>`:''}
   </div>`;
 }
 /* A double-session day renders as two stacked halves (Sabah over Akşam), each
@@ -1284,7 +1290,7 @@ function trainingBodyHtml(info){
   }
   const labels = ['SABAH','AKŞAM'];
   const halves = info.sessions.map((sess,i)=>{
-    const inner = compactTrainingHtml(sess) || '<div class="ct-empty">—</div>';
+    const inner = compactTrainingHtml(sess, {shortTotal:true}) || '<div class="ct-empty">—</div>';
     return `<div class="ct-half"><div class="ct-half-label">${labels[i]}</div>${inner}</div>`;
   }).join('');
   return `<div class="ct-double">${halves}</div>`;
