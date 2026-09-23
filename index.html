@@ -915,7 +915,7 @@ function toast(msg){
   toast._t=setTimeout(()=>t.classList.remove('show'),2200);
 }
 
-const APP_VERSION = 'v2026.09.22-2';   // bump on every release
+const APP_VERSION = 'v2026.09.22-3';   // bump on every release
 const LS_PREFIX = 'mgspanel:';
 function hasCloudStorage(){
   return typeof window.storage !== 'undefined' && window.storage && typeof window.storage.set === 'function' && typeof window.storage.get === 'function';
@@ -1246,6 +1246,12 @@ function formatPhysicalTheme(code){
 /* The five valid CDEF day patterns; the capital letter marks the emphasised
    quality of that training day. */
 const CDEF_PATTERNS = ['cdef','cdEf','cdeF','CDef','Cdef'];
+/* Durations and rests may be fractional (e.g. 2.5'). Shown with at most one
+   decimal and without a trailing ".0", and with a comma, as written in Turkish. */
+function fmtMin(n){
+  const v = Math.round((Number(n)||0)*10)/10;
+  return (Number.isInteger(v) ? String(v) : v.toFixed(1)).replace('.', ',');
+}
 function computeSectionMinutes(s){
   const sets = (s.sets && s.sets>0) ? s.sets : 1;
   const restCount = Math.max(0, sets-1);
@@ -1266,8 +1272,8 @@ function compactTrainingHtml(info){
   return `<div class="cal-training">
     ${hasMetrics?`<div class="ct-metrics">${metrics.join(' · ')}</div>`:''}
     ${hasThemes?`<div class="ct-themes">${physical?`<span class="ct-phys">${formatPhysicalTheme(physical)}</span>`:''}${tactical?`<span class="ct-tact">${escapeHtml(tactical)}</span>`:''}</div>`:''}
-    <div class="cal-training-rows">${sections.map(s=>`<div class="ct-row"><span class="ct-title">${escapeHtml(s.title)} - ${s.sets?s.sets+'x':''}${s.duration}'</span>${s.rest?`<span class="ct-rest">r:${s.rest}'</span>`:''}</div>`).join('')}</div>
-    ${totalMin>0?`<div class="ct-total">Toplam Süre: ${totalMin} dk</div>`:''}
+    <div class="cal-training-rows">${sections.map(s=>`<div class="ct-row"><span class="ct-title">${escapeHtml(s.title)} - ${s.sets?s.sets+'x':''}${fmtMin(s.duration)}'</span>${s.rest?`<span class="ct-rest">r:${fmtMin(s.rest)}'</span>`:''}</div>`).join('')}</div>
+    ${totalMin>0?`<div class="ct-total">Toplam Süre: ${fmtMin(totalMin)} dk</div>`:''}
   </div>`;
 }
 /* A double-session day renders as two stacked halves (Sabah over Akşam), each
@@ -1563,19 +1569,21 @@ function trainingFieldsHtml(p, data){
           <span class="tr-label">${label}</span>
           <input id="${p}trTitle${i}" placeholder="Başlık" value="${escapeAttr(titleVal)}">
           <input id="${p}trSets${i}" type="number" min="0" placeholder="Set" value="${sec.sets?sec.sets:''}">
-          <input id="${p}trDur${i}" type="number" min="0" placeholder="Dk" value="${sec.duration?sec.duration:''}">
-          <input id="${p}trRest${i}" type="number" min="0" placeholder="r:" value="${sec.rest?sec.rest:''}">
+          <input id="${p}trDur${i}" type="number" min="0" step="0.5" inputmode="decimal" placeholder="Dk" value="${sec.duration?sec.duration:''}">
+          <input id="${p}trRest${i}" type="number" min="0" step="0.5" inputmode="decimal" placeholder="r:" value="${sec.rest?sec.rest:''}">
         </div>`;
       }).join('')}
     </div>`;
 }
 function readTrainingFields(p){
   const val = id => { const el = document.getElementById(p+id); return el ? el.value : ''; };
-  const num = id => parseInt(val(id),10) || 0;
+  const int = id => parseInt(val(id),10) || 0;
+  // Turkish keyboards produce "2,5"; accept it as well as "2.5".
+  const dec = id => parseFloat(String(val(id)).replace(',', '.')) || 0;
   return {
     sections: DEFAULT_TRAINING_SLOTS.map((label,i)=>({
       title: val('trTitle'+i).trim() || label,
-      sets: num('trSets'+i), duration: num('trDur'+i), rest: num('trRest'+i)
+      sets: int('trSets'+i), duration: dec('trDur'+i), rest: dec('trRest'+i)
     })),
     physical: val('trPhysical'),
     tactical: val('trTactical').trim(),
@@ -1940,7 +1948,7 @@ function programTotalDuration(){
     const total = info.sections
       .filter(s=>s.duration>0)
       .reduce((sum,s)=>sum+computeSectionMinutes(s), 0);
-    if(total>0) return total+"'";
+    if(total>0) return fmtMin(total)+"'";
   }
   return state.program.toplamSure || '';
 }
@@ -1959,7 +1967,7 @@ function reconcileSectionsWithCalendar(){
 
   const isinma = active.find(s=>isIsinmaTitle(s.title));
   if(isinma){
-    state.program.isinmaSure = (isinma.sets?isinma.sets+'x':'')+isinma.duration+"'";
+    state.program.isinmaSure = (isinma.sets?isinma.sets+'x':'')+fmtMin(isinma.duration)+"'";
     state.program.isinmaTitle = isinma.title || 'Isınma';
   }
   const rest = active.filter(s=>s!==isinma);
@@ -1983,8 +1991,8 @@ function reconcileSectionsWithCalendar(){
     const m = takeMatch(s.title, i) || {};
     return {
       title: s.title,
-      sure: (s.sets?s.sets+'x':'')+s.duration+"'",
-      dinlenme: s.rest ? s.rest+"'" : (m.dinlenme||''),
+      sure: (s.sets?s.sets+'x':'')+fmtMin(s.duration)+"'",
+      dinlenme: s.rest ? fmtMin(s.rest)+"'" : (m.dinlenme||''),
       alan: m.alan||'',
       toplar: m.toplar||'',
       skor: m.skor||'',
@@ -2717,14 +2725,14 @@ function syncProgramFromCalendar(date){
   if(!activeSections.length) return false;
   const isinma = activeSections.find(s=>isIsinmaTitle(s.title));
   if(isinma){
-    state.program.isinmaSure = (isinma.sets?isinma.sets+'x':'')+isinma.duration+"'";
+    state.program.isinmaSure = (isinma.sets?isinma.sets+'x':'')+fmtMin(isinma.duration)+"'";
     state.program.isinmaTitle = isinma.title || 'Isınma';
   }
   state.program.sections = activeSections.filter(s=>s!==isinma).map(s=>({
     title: s.title,
     alan: '',
-    sure: (s.sets?s.sets+'x':'')+s.duration+"'",
-    dinlenme: s.rest?s.rest+"'":'',
+    sure: (s.sets?s.sets+'x':'')+fmtMin(s.duration)+"'",
+    dinlenme: s.rest?fmtMin(s.rest)+"'":'',
     toplar: '',
     skor: '',
     notlar: '',
