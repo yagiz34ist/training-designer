@@ -921,7 +921,7 @@ function toast(msg){
   toast._t=setTimeout(()=>t.classList.remove('show'),2200);
 }
 
-const APP_VERSION = 'v2026.09.22-4';   // bump on every release
+const APP_VERSION = 'v2026.09.24-3';   // bump on every release
 const LS_PREFIX = 'mgspanel:';
 function hasCloudStorage(){
   return typeof window.storage !== 'undefined' && window.storage && typeof window.storage.set === 'function' && typeof window.storage.get === 'function';
@@ -982,6 +982,9 @@ const _saveTimers = {};
    included in backups or in the synced data itself. */
 const SYNC = {
   TOKEN:'mgssync:token', GIST:'mgssync:gist', LAST:'mgssync:last', DIRTY:'mgssync:dirty',
+  REV:'mgssync:rev',            // version counter — immune to a wrong device clock
+  PREV:'mgssync:prev',          // this device's data, kept just before a cloud copy overwrites it
+  serverTime:0, skew:0,
   FILE:'muglaspor-panel.json', DESC:'Muğlaspor Antrenman Paneli — senkron verisi (otomatik)',
   applying:false, pushTimer:null, busy:false
 };
@@ -995,6 +998,16 @@ function syncNoteChange(){
   setSyncStatus('pending');
   clearTimeout(SYNC.pushTimer);
   SYNC.pushTimer = setTimeout(()=>{ pushSync(); }, 4000);
+}
+
+/* A device clock that is badly wrong used to break syncing silently, so say so. */
+function warnIfClockOff(){
+  if(Math.abs(SYNC.skew) > 5*60*1000){
+    const mins = Math.round(Math.abs(SYNC.skew)/60000);
+    setSyncStatus('err', 'Bu cihazın saati '+mins+' dakika '+(SYNC.skew>0?'ileri':'geri')+'. Senkron çalışır ama cihaz saatini düzeltmen önerilir.');
+    return true;
+  }
+  return false;
 }
 
 function setSyncStatus(st, msg){
@@ -1019,6 +1032,9 @@ async function ghApi(path, opts){
       'X-GitHub-Api-Version':'2022-11-28'
     }, (opts&&opts.body)?{'Content-Type':'application/json'}:{})
   }));
+  // GitHub's own clock, used to detect a wrong device clock.
+  const d = Date.parse(res.headers.get('date')||'');
+  if(d){ SYNC.serverTime = d; SYNC.skew = Date.now() - d; }
   if(!res.ok){
     let detail=''; try{ detail = (await res.json()).message || ''; }catch(e){}
     const err = new Error('GitHub '+res.status+(detail?(': '+detail):''));
@@ -1035,6 +1051,13 @@ async function buildSyncPayload(){
   }
   return { _format:'muglaspor-antrenman-paneli', _version:1, updatedAt: Date.now(), data };
 }
+/* The revision counter decides what is newer — never the clock. Older payloads
+   without one count as revision 1 so they still get picked up once. */
+function remoteRevOf(remote){
+  if(!remote) return 0;
+  return Number.isFinite(remote.rev) ? remote.rev : (remote.updatedAt ? 1 : 0);
+}
+function localRev(){ return parseInt(syncGet(SYNC.REV)||'0',10) || 0; }
 
 async function findSyncGist(){
   const known = syncGet(SYNC.GIST);
@@ -1062,11 +1085,25 @@ async function fetchRemote(){
   try{ return JSON.parse(text); }catch(e){ return null; }
 }
 
-async function pushSync(){
+async function pushSync(opts){
+  opts = opts || {};
   if(!syncConfigured() || SYNC.busy) return;
   SYNC.busy = true; setSyncStatus('busy');
   try{
     const payload = await buildSyncPayload();
+    const remoteNow = await fetchRemote();
+    const rRev = remoteRevOf(remoteNow);
+    if(!opts.force && rRev > localRev()){
+      // Someone else pushed since this device last synced — don't silently
+      // overwrite their work.
+      const when = remoteNow && remoteNow.updatedAt ? new Date(remoteNow.updatedAt).toLocaleString('tr-TR') : 'bilinmiyor';
+      const overwrite = window.confirm(
+        'Bulutta, bu cihazın görmediği daha yeni bir kayıt var ('+when+').\n\n'+
+        'TAMAM → Yine de bu cihazdakini gönder (buluttaki değişir)\n'+
+        'İPTAL → Gönderme, önce buluttakini incele');
+      if(!overwrite){ setSyncStatus('pending', 'Bulutta daha yeni kayıt var — “Şimdi senkronize et” ile bak'); return; }
+    }
+    payload.rev = rRev + 1;
     const body = JSON.stringify(payload);
     if(body.length > 9_000_000){
       setSyncStatus('err', 'Veri çok büyük (videolar?) — bilgisayardan yüklenen videoları bağlantıyla değiştir');
@@ -1081,8 +1118,10 @@ async function pushSync(){
       syncSet(SYNC.GIST, g.id);
     }
     syncSet(SYNC.LAST, payload.updatedAt);
+    syncSet(SYNC.REV, payload.rev);
     syncSet(SYNC.DIRTY, null);
     setSyncStatus('ok');
+    warnIfClockOff();
   }catch(e){
     console.error('sync push failed', e);
     setSyncStatus('err', 'Buluta gönderilemedi: '+e.message);
@@ -1096,6 +1135,17 @@ async function pushSync(){
 async function applyRemote(remote){
   SYNC.applying = true;
   try{
+    // Safety net: keep this device's current data before replacing it, so an
+    // unwanted overwrite can be undone locally without touching the cloud.
+    try{
+      const prevData = {};
+      for(const k of collectBackupKeys()){
+        const v = await storeGet(k, undefined);
+        if(v !== undefined) prevData[k] = v;
+      }
+      syncSet(SYNC.PREV, JSON.stringify({savedAt:Date.now(), data:prevData}));
+    }catch(e){ /* snapshot is best-effort; never block the sync */ }
+
     const keep = new Set(Object.keys(remote.data||{}));
     const old = [];
     for(let i=0;i<window.localStorage.length;i++){
@@ -1105,6 +1155,7 @@ async function applyRemote(remote){
     for(const k of old) if(!keep.has(k)) await storeDelete(k);
     for(const [k,v] of Object.entries(remote.data||{})) await storeSet(k, v, true);
     syncSet(SYNC.LAST, remote.updatedAt);
+    syncSet(SYNC.REV, remoteRevOf(remote));
     syncSet(SYNC.DIRTY, null);
   } finally { SYNC.applying = false; }
 }
@@ -1116,12 +1167,12 @@ async function pullSync(opts){
   SYNC.busy = true; setSyncStatus('busy');
   try{
     const remote = await fetchRemote();
-    const last = parseInt(syncGet(SYNC.LAST)||'0',10);
-    if(!remote || !remote.updatedAt || remote.updatedAt <= last){
+    if(!remote || (!opts.force && remoteRevOf(remote) <= localRev())){
       setSyncStatus(syncGet(SYNC.DIRTY)==='1' ? 'pending' : 'ok');
+      warnIfClockOff();
       return false;
     }
-    if(syncGet(SYNC.DIRTY)==='1'){
+    if(syncGet(SYNC.DIRTY)==='1' && !opts.force){
       // Both sides changed since the last sync — let the coach choose.
       const when = new Date(remote.updatedAt).toLocaleString('tr-TR');
       const useCloud = window.confirm(
@@ -5482,6 +5533,16 @@ function syncPanelHtml(){
         <button class="btn small primary" id="syNowBtn" style="flex:1;">⟳ Şimdi senkronize et</button>
         <button class="btn small" id="syOffBtn">Bağlantıyı kes</button>
       </div>
+      <div style="font-size:11px;color:#6b6f63;margin-top:10px;">Cihazlar ayrı düşerse, hangisinin doğru olduğunu sen seç:</div>
+      <div style="display:flex;gap:6px;margin-top:5px;">
+        <button class="btn small" id="syForcePullBtn" style="flex:1;">⬇ Buluttakini bu cihaza yükle</button>
+        <button class="btn small" id="syForcePushBtn" style="flex:1;">⬆ Bu cihazdakini buluta gönder</button>
+      </div>
+      <div style="font-size:10.5px;color:#8a8f80;margin-top:5px;line-height:1.4;">
+        Seçtiğin yön diğerinin üzerine yazar. Emin değilsen önce “Yedek Dosyasını İndir” ile bu cihazın kopyasını al.
+      </div>
+      <button class="btn small" id="syHistBtn" style="width:100%;margin-top:8px;">🕘 Bulut geçmişi — eski bir kayda dön</button>
+      ${syncGet(SYNC.PREV) ? `<button class="btn small" id="syPrevBtn" style="width:100%;margin-top:6px;">↩ Bu cihazın senkrondan önceki hâline dön</button>` : ''}
     </div>`;
   }
   return `<div class="sync-box">
@@ -5520,6 +5581,70 @@ async function connectSync(){
     syncSet(SYNC.TOKEN, null);
     msg.innerHTML = '<span style="color:#b34747;">Bağlanılamadı: '+escapeHtml(e.message)+'.</span> Anahtarı ve “gist” yetkisini kontrol et.';
     setSyncStatus('ok');
+  }
+}
+
+/* Every push creates a new gist revision on GitHub, so an overwritten sync can
+   still be recovered. This lists those revisions and restores a chosen one. */
+async function openSyncHistoryModal(){
+  if(!syncConfigured()){ toast('Önce senkronizasyonu bağla'); return; }
+  openModal('Bulut Geçmişi', '<div class="empty-hint">Geçmiş yükleniyor…</div>', async ()=>{}, true);
+  const body = document.getElementById('modalBody');
+  try{
+    const id = await findSyncGist();
+    if(!id){ body.innerHTML = '<div class="empty-hint">Bulutta kayıt bulunamadı.</div>'; return; }
+    const g = await ghApi('/gists/'+id);
+    const hist = (g.history||[]).slice(0, 30);
+    if(!hist.length){ body.innerHTML = '<div class="empty-hint">Bu kaydın geçmiş sürümü yok.</div>'; return; }
+    body.innerHTML = `
+      <div style="font-size:12px;color:#6b6f63;line-height:1.5;margin-bottom:8px;">
+        Her senkronda bulutta yeni bir sürüm oluşur. Üzerine yazılmış bir çalışmayı buradan geri alabilirsin.
+        Bir sürüme tıkladığında içindekiler önce özet olarak gösterilir.
+      </div>
+      <div id="syHistList">${hist.map((h,i)=>`
+        <div class="pdfm-row" data-v="${h.version}">
+          ${new Date(h.committed_at).toLocaleString('tr-TR')}${i===0?' — <b>şu anki</b>':''}
+          <span style="opacity:.6;font-size:11px;"> · ${Math.round((h.change_status&&h.change_status.total||0))} değişiklik</span>
+        </div>`).join('')}</div>
+      <div id="syHistDetail" style="margin-top:10px;"></div>`;
+    body.querySelectorAll('#syHistList .pdfm-row').forEach(row=>{
+      row.addEventListener('click', async ()=>{
+        body.querySelectorAll('#syHistList .pdfm-row').forEach(r=>r.classList.remove('on'));
+        row.classList.add('on');
+        const det = document.getElementById('syHistDetail');
+        det.innerHTML = '<div class="empty-hint">Sürüm okunuyor…</div>';
+        try{
+          const rev = await ghApi('/gists/'+id+'/'+row.dataset.v);
+          const f = rev.files && rev.files[SYNC.FILE];
+          let text = f ? f.content : '';
+          if(f && f.truncated){ text = await (await fetch(f.raw_url)).text(); }
+          const payload = JSON.parse(text);
+          const d = payload.data || {};
+          const count = k => Array.isArray(d[k]) ? d[k].length : 0;
+          const drawings = Object.keys(d).filter(k=>k.startsWith('drawing:')).length;
+          const programs = Object.keys(d).filter(k=>k.startsWith('program:')).length;
+          det.innerHTML = `
+            <div class="sync-box">
+              <div style="font-size:12px;"><b>Bu sürümün içeriği</b></div>
+              <div style="font-family:'JetBrains Mono';font-size:11px;color:#6b6f63;margin-top:4px;line-height:1.6;">
+                Oyuncu: ${count('roster')} · Takım: ${count('teams')} · Maç: ${count('matches')}<br>
+                Çizim: ${drawings} · Günlük program: ${programs} · Klasör: ${count('folders')}
+              </div>
+              <button class="btn small primary" id="syRestoreBtn" style="width:100%;margin-top:8px;">Bu sürüme dön</button>
+            </div>`;
+          document.getElementById('syRestoreBtn').addEventListener('click', async ()=>{
+            if(!window.confirm('Bu sürüm bu cihaza yüklenecek ve buluta da bu hâli gönderilecek.\n\nDevam edilsin mi?')) return;
+            closeModal();
+            await applyRemote(payload);
+            await pushSync({force:true});
+            toast('Eski sürüme dönüldü — yenileniyor…');
+            setTimeout(()=>location.reload(), 700);
+          });
+        }catch(e){ det.innerHTML = '<div class="empty-hint" style="color:#b34747;">Sürüm okunamadı: '+escapeHtml(e.message)+'</div>'; }
+      });
+    });
+  }catch(e){
+    body.innerHTML = '<div class="empty-hint" style="color:#b34747;">Geçmiş alınamadı: '+escapeHtml(e.message)+'</div>';
   }
 }
 
@@ -5566,6 +5691,36 @@ function openBackupModal(){
     if(await pullSync()){ toast('Güncel veriler alındı — yenileniyor…'); setTimeout(()=>location.reload(), 500); }
     else { await pushSync(); toast('Zaten güncel ✓'); }
   });
+  const syFP = document.getElementById('syForcePullBtn');
+  if(syFP) syFP.addEventListener('click', async ()=>{
+    if(!window.confirm('Buluttaki veriler bu cihaza yüklensin mi?\n\nBu cihazdaki mevcut veriler buluttakiyle değiştirilecek.')) return;
+    closeModal();
+    if(await pullSync({force:true})){ toast('Bulut verileri yüklendi — yenileniyor…'); setTimeout(()=>location.reload(), 600); }
+    else toast('Bulutta veri bulunamadı');
+  });
+  const syFPu = document.getElementById('syForcePushBtn');
+  if(syFPu) syFPu.addEventListener('click', async ()=>{
+    if(!window.confirm('Bu cihazdaki veriler buluta gönderilsin mi?\n\nBuluttaki mevcut kayıt bununla değiştirilecek.')) return;
+    closeModal();
+    await pushSync({force:true});
+    toast('Bu cihazdakiler buluta gönderildi ✓');
+  });
+  const syP = document.getElementById('syPrevBtn');
+  if(syP) syP.addEventListener('click', async ()=>{
+    let snap; try{ snap = JSON.parse(syncGet(SYNC.PREV)); }catch(e){}
+    if(!snap || !snap.data){ toast('Kayıtlı önceki hâl bulunamadı'); return; }
+    const when = new Date(snap.savedAt).toLocaleString('tr-TR');
+    if(!window.confirm('Bu cihazın '+when+' tarihindeki (senkron üzerine yazmadan hemen önceki) hâli geri yüklensin mi?\n\nBuluta gönderilmez; önce kontrol edersin.')) return;
+    closeModal();
+    SYNC.applying = true;
+    try{
+      for(const [k,v] of Object.entries(snap.data)) await storeSet(k, v, true);
+    } finally { SYNC.applying = false; }
+    toast('Önceki hâl geri yüklendi — yenileniyor…');
+    setTimeout(()=>location.reload(), 700);
+  });
+  const syH = document.getElementById('syHistBtn');
+  if(syH) syH.addEventListener('click', openSyncHistoryModal);
   const syO = document.getElementById('syOffBtn');
   if(syO) syO.addEventListener('click', ()=>{
     [SYNC.TOKEN,SYNC.GIST,SYNC.LAST,SYNC.DIRTY].forEach(k=>syncSet(k,null));
