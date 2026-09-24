@@ -921,7 +921,7 @@ function toast(msg){
   toast._t=setTimeout(()=>t.classList.remove('show'),2200);
 }
 
-const APP_VERSION = 'v2026.09.24-3';   // bump on every release
+const APP_VERSION = 'v2026.09.24-4';   // bump on every release
 const LS_PREFIX = 'mgspanel:';
 function hasCloudStorage(){
   return typeof window.storage !== 'undefined' && window.storage && typeof window.storage.set === 'function' && typeof window.storage.get === 'function';
@@ -984,7 +984,7 @@ const SYNC = {
   TOKEN:'mgssync:token', GIST:'mgssync:gist', LAST:'mgssync:last', DIRTY:'mgssync:dirty',
   REV:'mgssync:rev',            // version counter — immune to a wrong device clock
   PREV:'mgssync:prev',          // this device's data, kept just before a cloud copy overwrites it
-  serverTime:0, skew:0,
+  serverTime:0, skew:0, keepLocalUntil:0,
   FILE:'muglaspor-panel.json', DESC:'Muğlaspor Antrenman Paneli — senkron verisi (otomatik)',
   applying:false, pushTimer:null, busy:false
 };
@@ -1172,6 +1172,10 @@ async function pullSync(opts){
       warnIfClockOff();
       return false;
     }
+    if(SYNC.keepLocalUntil && Date.now() < SYNC.keepLocalUntil){
+      setSyncStatus(syncGet(SYNC.DIRTY)==='1' ? 'pending' : 'ok');
+      return false;
+    }
     if(syncGet(SYNC.DIRTY)==='1' && !opts.force){
       // Both sides changed since the last sync — let the coach choose.
       const when = new Date(remote.updatedAt).toLocaleString('tr-TR');
@@ -1179,7 +1183,15 @@ async function pullSync(opts){
         'Bu cihazda henüz buluta gönderilmemiş değişiklikler var, ama bulutta da daha yeni bir kayıt ('+when+') bulunuyor.\n\n'+
         'TAMAM → Buluttakini kullan (bu cihazdaki son değişiklikler silinir)\n'+
         'İPTAL → Bu cihazdakini koru ve buluta gönder');
-      if(!useCloud){ SYNC.busy=false; await pushSync(); return false; }
+      if(!useCloud){
+        // Keep this device's version: push it WITHOUT asking again, and record
+        // that we've now seen the cloud revision, so the same question isn't
+        // repeated on the next check (that produced a prompt loop).
+        SYNC.busy = false;
+        SYNC.keepLocalUntil = Date.now() + 60000;
+        await pushSync({force:true});
+        return false;
+      }
     }
     await applyRemote(remote);
     setSyncStatus('ok');
