@@ -295,6 +295,10 @@ input,select,textarea{font-family:'Work Sans',sans-serif;}
 .lib-chip.clear{color:#c58b8b;border-color:rgba(197,139,139,.4);}
 .lib-tag.vid{border-color:rgba(226,165,61,.5);color:var(--amber);opacity:1;}
 .lib-form-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
+.dn-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.dn-f label{display:block;font-size:10px;color:#6b6f63;margin-bottom:3px;text-transform:uppercase;font-family:'JetBrains Mono';}
+.dn-f input{width:100%;box-sizing:border-box;padding:7px 8px;border:1px solid #e4e0d2;border-radius:6px;font-size:13px;}
+.dn-f.wide{grid-column:1/-1;}
 .lib-form-grid label{display:block;font-size:10px;color:#6b6f63;margin-bottom:3px;text-transform:uppercase;font-family:'JetBrains Mono';}
 .lib-form-grid input{width:100%;box-sizing:border-box;}
 .lib-sec-title{font-family:'Oswald';font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--grass-deep);margin:14px 0 6px;}
@@ -824,6 +828,7 @@ input,select,textarea{font-family:'Work Sans',sans-serif;}
   <div class="bib-popup-title">Durum</div>
   <button class="bib-none-btn" id="statusInjuredBtn" style="color:#b34747;border-color:rgba(179,71,71,.4);">🔴 Sakat</button>
   <button class="bib-none-btn" id="statusLeaveBtn" style="color:#a9761f;border-color:rgba(169,118,31,.4);">🟠 İzinli</button>
+  <button class="bib-none-btn" id="statusRegenBtn" style="color:#2f6f9f;border-color:rgba(47,111,159,.4);">🔵 Rejenerasyon</button>
   <button class="bib-none-btn" id="statusClearBtn">Temizle</button>
 </div>
 
@@ -921,7 +926,7 @@ function toast(msg){
   toast._t=setTimeout(()=>t.classList.remove('show'),2200);
 }
 
-const APP_VERSION = 'v2026.09.24-4';   // bump on every release
+const APP_VERSION = 'v2026.10.16-1';   // bump on every release
 const LS_PREFIX = 'mgspanel:';
 function hasCloudStorage(){
   return typeof window.storage !== 'undefined' && window.storage && typeof window.storage.set === 'function' && typeof window.storage.get === 'function';
@@ -982,9 +987,10 @@ const _saveTimers = {};
    included in backups or in the synced data itself. */
 const SYNC = {
   TOKEN:'mgssync:token', GIST:'mgssync:gist', LAST:'mgssync:last', DIRTY:'mgssync:dirty',
-  REV:'mgssync:rev',            // version counter — immune to a wrong device clock
+  REV:'mgssync:rev',
+  DEVID:'mgssync:devid',        // identifies the writer, so a device never conflicts with itself            // version counter — immune to a wrong device clock
   PREV:'mgssync:prev',          // this device's data, kept just before a cloud copy overwrites it
-  serverTime:0, skew:0, keepLocalUntil:0,
+  serverTime:0, skew:0, keepLocalUntil:0, pushPausedUntil:0,
   FILE:'muglaspor-panel.json', DESC:'Muğlaspor Antrenman Paneli — senkron verisi (otomatik)',
   applying:false, pushTimer:null, busy:false
 };
@@ -994,6 +1000,7 @@ function syncConfigured(){ return !!syncGet(SYNC.TOKEN); }
 
 function syncNoteChange(){
   if(SYNC.applying || !syncConfigured()) return;
+  if(Date.now() < SYNC.pushPausedUntil) { syncSet(SYNC.DIRTY,'1'); setSyncStatus('pending'); return; }
   syncSet(SYNC.DIRTY, '1');
   setSyncStatus('pending');
   clearTimeout(SYNC.pushTimer);
@@ -1049,7 +1056,7 @@ async function buildSyncPayload(){
     const v = await storeGet(k, undefined);
     if(v !== undefined) data[k] = v;
   }
-  return { _format:'muglaspor-antrenman-paneli', _version:1, updatedAt: Date.now(), data };
+  return { _format:'muglaspor-antrenman-paneli', _version:1, writer: deviceId(), updatedAt: Date.now(), data };
 }
 /* The revision counter decides what is newer — never the clock. Older payloads
    without one count as revision 1 so they still get picked up once. */
@@ -1058,6 +1065,15 @@ function remoteRevOf(remote){
   return Number.isFinite(remote.rev) ? remote.rev : (remote.updatedAt ? 1 : 0);
 }
 function localRev(){ return parseInt(syncGet(SYNC.REV)||'0',10) || 0; }
+/* A stable id per device (per browser profile). Without it, a record this very
+   laptop wrote — from another tab or an earlier session — came back looking
+   like a stranger's change and raised a false conflict warning. */
+function deviceId(){
+  let id = syncGet(SYNC.DEVID);
+  if(!id){ id = 'dev-' + Math.random().toString(36).slice(2,10); syncSet(SYNC.DEVID, id); }
+  return id;
+}
+function writtenByThisDevice(remote){ return !!remote && remote.writer === deviceId(); }
 
 async function findSyncGist(){
   const known = syncGet(SYNC.GIST);
@@ -1087,13 +1103,14 @@ async function fetchRemote(){
 
 async function pushSync(opts){
   opts = opts || {};
+  if(opts.force) SYNC.pushPausedUntil = 0;
   if(!syncConfigured() || SYNC.busy) return;
   SYNC.busy = true; setSyncStatus('busy');
   try{
     const payload = await buildSyncPayload();
     const remoteNow = await fetchRemote();
     const rRev = remoteRevOf(remoteNow);
-    if(!opts.force && rRev > localRev()){
+    if(!opts.force && rRev > localRev() && !writtenByThisDevice(remoteNow)){
       // Someone else pushed since this device last synced — don't silently
       // overwrite their work.
       const when = remoteNow && remoteNow.updatedAt ? new Date(remoteNow.updatedAt).toLocaleString('tr-TR') : 'bilinmiyor';
@@ -1101,7 +1118,15 @@ async function pushSync(opts){
         'Bulutta, bu cihazın görmediği daha yeni bir kayıt var ('+when+').\n\n'+
         'TAMAM → Yine de bu cihazdakini gönder (buluttaki değişir)\n'+
         'İPTAL → Gönderme, önce buluttakini incele');
-      if(!overwrite){ setSyncStatus('pending', 'Bulutta daha yeni kayıt var — “Şimdi senkronize et” ile bak'); return; }
+      if(!overwrite){
+        // Stop auto-retrying, otherwise the same question returns every few
+        // seconds. Nothing is lost: the local changes stay marked as pending
+        // and go up as soon as a direction is chosen in the 💾 window.
+        SYNC.pushPausedUntil = Date.now() + 15*60*1000;
+        clearTimeout(SYNC.pushTimer); SYNC.pushTimer = null;
+        setSyncStatus('pending', 'Gönderim duraklatıldı — 💾 penceresinden yön seç');
+        return;
+      }
     }
     payload.rev = rRev + 1;
     const body = JSON.stringify(payload);
@@ -1127,7 +1152,9 @@ async function pushSync(opts){
     setSyncStatus('err', 'Buluta gönderilemedi: '+e.message);
   }finally{
     SYNC.busy = false;
-    if(syncGet(SYNC.DIRTY)==='1' && !SYNC.pushTimer) SYNC.pushTimer = setTimeout(pushSync, 4000);
+    if(syncGet(SYNC.DIRTY)==='1' && !SYNC.pushTimer && Date.now() >= SYNC.pushPausedUntil){
+      SYNC.pushTimer = setTimeout(pushSync, 4000);
+    }
   }
 }
 
@@ -1163,6 +1190,7 @@ async function applyRemote(remote){
 /* Returns true when this device's data was replaced by a newer cloud copy. */
 async function pullSync(opts){
   opts = opts || {};
+  if(opts.force) SYNC.pushPausedUntil = 0;
   if(!syncConfigured() || SYNC.busy) return false;
   SYNC.busy = true; setSyncStatus('busy');
   try{
@@ -1174,6 +1202,14 @@ async function pullSync(opts){
     }
     if(SYNC.keepLocalUntil && Date.now() < SYNC.keepLocalUntil){
       setSyncStatus(syncGet(SYNC.DIRTY)==='1' ? 'pending' : 'ok');
+      return false;
+    }
+    if(writtenByThisDevice(remote) && syncGet(SYNC.DIRTY)==='1'){
+      // Our own earlier push: nothing to reconcile, just catch up the counter
+      // and send the newer local changes.
+      syncSet(SYNC.REV, remoteRevOf(remote));
+      SYNC.busy = false;
+      await pushSync({force:true});
       return false;
     }
     if(syncGet(SYNC.DIRTY)==='1' && !opts.force){
@@ -1368,6 +1404,11 @@ function scrollToCurrentMonth(){
   const container = document.getElementById('calendarScroll');
   if(!container) return;
   const now = new Date();
+  /* Open on TODAY's cell (local date), not the 1st of the month. Falls back to
+     the month, then to the first month, when today is outside the season. */
+  const todayKey = `${now.getFullYear()}-${pad2(now.getMonth()+1)}-${pad2(now.getDate())}`;
+  const todayCell = container.querySelector(`.cal-cell[data-date="${todayKey}"]`);
+  if(todayCell){ todayCell.scrollIntoView({block:'center'}); return; }
   let key = now.getFullYear()+'-'+now.getMonth();
   let el = container.querySelector(`.cal-month[data-monthkey="${key}"]`);
   if(!el) el = container.querySelector('.cal-month');
@@ -2176,7 +2217,7 @@ function renderRosterPrint(){
   if(countEl){
     let players=0, keepers=0;
     groups.forEach(g=>g.players.forEach(p=>{
-      if(status[p.id]) return; // sakat/izinli düşülür
+      if(status[p.id]) return; // sakat/izinli/rejenerasyon düşülür
       if(p.mevki==='GK') keepers++; else players++;
     }));
     countEl.textContent = `${players} Oyuncu + ${keepers} Kaleci`;
@@ -2189,7 +2230,7 @@ function renderRosterPrint(){
   wrap.innerHTML = groups.filter(g=>g.players.length).map(g=>{
     const cells = g.players.map(p=>{
       const st = status[p.id];
-      const noteHtml = st ? `<span class="pp-status-note">${st==='sakat'?'SK':'İZ'}</span>` : '';
+      const noteHtml = st ? `<span class="pp-status-note">${st==='sakat'?'SK':(st==='rejenerasyon'?'RJ':'İZ')}</span>` : '';
       const numHtml = p.number ? ` <span style="opacity:.5;font-size:8.5px;">#${escapeHtml(p.number)}</span>` : '';
       const gkClass = p.mevki==='GK' ? ' gk' : '';
       return `<div class="pp-player-cell${gkClass}">
@@ -2351,7 +2392,7 @@ function renderSections(){
       <div class="pp-drawing-row pp-no-print">
         <span>Bağlı Çizim:</span>
         <select data-i="${i}" data-f="drawingId">${drawingOptionsHtml(s.drawingId)}</select>
-        ${s.drawingId ? `<button type="button" class="btn small" data-pullnotes="${i}" title="Bu drilin kayıtlı anahtar faktörlerini buraya getir (buradaki metnin yerine)">📝 Notları getir</button>` : ''}
+        ${s.drawingId ? `<button type="button" class="btn small" data-pullnotes="${i}" title="Bu drilin kayıtlı bilgilerini (Alan, Süre, Dinlenme, Toplar, Skor, Anahtar Faktörler) buraya getir — dolu olanlar buradakinin yerine geçer">📝 Bilgileri getir</button>` : ''}
       </div>
     `;
     (i<2 ? wrap1 : wrap2).appendChild(card);
@@ -2385,14 +2426,14 @@ function renderSections(){
       btn.addEventListener('click', ()=>{
         const i = +btn.dataset.pullnotes;
         const sec = state.program.sections[i];
-        const entry = state.drawingIndex.find(d=>d.id===sec.drawingId);
-        const master = (entry && entry.meta && entry.meta.not) ? entry.meta.not : '';
-        if(!master){ toast('Bu drilin kayıtlı anahtar faktörü yok'); return; }
-        sec.notlar = master;   // only this sheet changes; the drill's own notes stay put
+        const dv = drillSectionValues(sec.drawingId);
+        const keys = Object.keys(dv).filter(k=>dv[k]);
+        if(!keys.length){ toast('Bu drilin kayıtlı bilgisi yok'); return; }
+        keys.forEach(k=>{ sec[k] = dv[k]; });   // only this sheet changes; the drill itself stays put
         renderSections();
         renderPlanList();
         autosaveProgram();
-        toast('Anahtar faktörler getirildi ✓');
+        toast('Dril bilgileri getirildi ✓');
       });
     });
     wrap.querySelectorAll('[data-remove]').forEach(btn=>{
@@ -2661,17 +2702,26 @@ async function loadSectionDrawingPreview(i, drawingId){
     ${known ? 'Çizim dosyası bu cihazda yok:<br><b>'+escapeHtml(known.name)+'</b>' : 'Bağlı çizim bulunamadı'}
     <br><span style="font-size:9px;opacity:.75;">💾 → “Çizimler bu cihazda var mı?”</span></div>`;
 }
+/* The drill's saved Anahtar Faktörler card, mapped onto the section fields of
+   the daily sheet. Süre carries the set count too ("3x5'"), like the sheet. */
+function drillSectionValues(drawingId){
+  const entry = state.drawingIndex.find(d=>d.id===drawingId);
+  const m = (entry && entry.meta) || {};
+  const s = x=>String(x||'').trim();
+  const sure = s(m.sure) ? (s(m.setSayisi) ? s(m.setSayisi).replace(/x$/i,'')+'x'+s(m.sure) : s(m.sure)) : '';
+  return { alan:s(m.alan), sure, dinlenme:s(m.dinlenme), toplar:s(m.toplar), skor:s(m.skor), notlar:s(m.not) };
+}
 function setSectionDrawing(i, drawingId){
   const sec = state.program.sections[i];
   if(sec && drawingId){
-    const entry = state.drawingIndex.find(d=>d.id===drawingId);
-    const master = (entry && entry.meta && entry.meta.not) ? entry.meta.not : '';
-    // Copy the drill's master notes across — but never overwrite something the
-    // coach has already written for this session.
-    if(master && !String(sec.notlar||'').trim()){
-      sec.notlar = master;
-      autosaveProgram();
-    }
+    // Copy the drill's saved values across — but only into EMPTY fields, so
+    // nothing the coach (or the calendar) already put on this sheet is lost.
+    const dv = drillSectionValues(drawingId);
+    let changed = false;
+    Object.keys(dv).forEach(k=>{
+      if(dv[k] && !String(sec[k]||'').trim()){ sec[k] = dv[k]; changed = true; }
+    });
+    if(changed){ renderPlanList(); autosaveProgram(); }
   }
   // Layout structure (side-by-side drawing vs full-width) depends on whether a
   // drawing is linked, so just re-render the section cards to rebuild it cleanly.
@@ -3457,7 +3507,7 @@ function openLibraryItemModal(id){
 
     <button class="btn primary" id="libOpenBoardBtn" style="width:100%;margin-top:14px;">⤢ Taktik Tahtasında Aç</button>
   `, async ()=>{
-    entry.meta = {
+    entry.meta = Object.assign({}, entry.meta, {
       days: Array.from(document.querySelectorAll('#libDayRow .lib-day-btn.on')).map(b=>b.dataset.day),
       video: document.getElementById('libVideo').value.trim(),
       videoFile: pendingVideo.data !== undefined ? pendingVideo.data : (m.videoFile||''),
@@ -3469,7 +3519,7 @@ function openLibraryItemModal(id){
       ysMesafe: document.getElementById('libYs').value.trim(),
       sprint: document.getElementById('libSp').value.trim(),
       not: document.getElementById('libNot').value.trim()
-    };
+    });
     await storeSet('drawing-index', state.drawingIndex);
     renderFolders();
     toast('Antrenman bilgileri kaydedildi ✓');
@@ -3636,17 +3686,29 @@ function openDrillNotesModal(){
   openModal(`Anahtar Faktörler — ${entry.name||'Antrenman'}`, `
     <div style="font-size:11px;color:#6b6f63;margin-bottom:6px;">
       Bu drilin kuralları ve anahtar faktörleri. Günlük programda bu dril seçildiğinde
-      buradaki metin otomatik olarak gelir.
+      buradaki bilgiler otomatik olarak kağıda gelir.
     </div>
+    <div class="dn-grid">
+      <div class="dn-f wide"><label>Alan</label><input id="dnAlan" value="${escapeAttr(m.alan||'')}" placeholder="40x30m"></div>
+      <div class="dn-f"><label>Süre</label><input id="dnSure" value="${escapeAttr(m.sure||'')}" placeholder="5'"></div>
+      <div class="dn-f"><label>Dinlenme</label><input id="dnDin" value="${escapeAttr(m.dinlenme||'')}" placeholder="1'"></div>
+      <div class="dn-f wide"><label>Toplar</label><input id="dnToplar" value="${escapeAttr(m.toplar||'')}"></div>
+      <div class="dn-f wide"><label>Skor</label><input id="dnSkor" value="${escapeAttr(m.skor||'')}"></div>
+    </div>
+    <label style="display:block;font-size:11px;color:#6b6f63;margin:10px 0 4px;">Anahtar Faktörler</label>
     <textarea id="dnText" rows="9" style="width:100%;padding:9px;border:1px solid #e4e0d2;border-radius:6px;font-size:13px;line-height:1.45;box-sizing:border-box;resize:vertical;">${escapeHtml(m.not||'')}</textarea>
   `, async ()=>{
-    entry.meta = Object.assign({}, entry.meta, { not: document.getElementById('dnText').value.trim() });
+    const v = id=>document.getElementById(id).value.trim();
+    entry.meta = Object.assign({}, entry.meta, {
+      not: v('dnText'), alan: v('dnAlan'), sure: v('dnSure'),
+      dinlenme: v('dnDin'), toplar: v('dnToplar'), skor: v('dnSkor')
+    });
     await storeSet('drawing-index', state.drawingIndex);
     renderFolders();
     updateDrillNotesFab();
     toast('Anahtar faktörler kaydedildi ✓');
   });
-  setTimeout(()=>{ const t=document.getElementById('dnText'); if(t) t.focus(); }, 30);
+  setTimeout(()=>{ const t=document.getElementById('dnAlan'); if(t) t.focus(); }, 30);
 }
 
 function openSaveAsModal(){
@@ -4324,7 +4386,7 @@ function updateDrillNotesFab(){
   const fab = document.getElementById('drillNotesBtn');
   if(!fab) return;
   const entry = state.drawingIndex.find(x=>x.id===(state.currentDrawing||{}).id);
-  const has = !!(entry && entry.meta && String(entry.meta.not||'').trim());
+  const has = !!(entry && entry.meta && ['not','alan','toplar','skor'].some(k=>String(entry.meta[k]||'').trim()));
   fab.classList.toggle('has-notes', has);
   fab.title = has ? 'Anahtar faktörler (yazılı) — düzenlemek için tıkla'
                   : 'Bu drilin anahtar faktörlerini / kurallarını yaz';
@@ -6005,6 +6067,7 @@ function bindEvents(){
 
   document.getElementById('statusInjuredBtn').addEventListener('click', ()=>{ if(statusPopupTarget) setPlayerDayStatus(statusPopupTarget, 'sakat'); });
   document.getElementById('statusLeaveBtn').addEventListener('click', ()=>{ if(statusPopupTarget) setPlayerDayStatus(statusPopupTarget, 'izinli'); });
+  document.getElementById('statusRegenBtn').addEventListener('click', ()=>{ if(statusPopupTarget) setPlayerDayStatus(statusPopupTarget, 'rejenerasyon'); });
   document.getElementById('statusClearBtn').addEventListener('click', ()=>{ if(statusPopupTarget) setPlayerDayStatus(statusPopupTarget, null); });
   document.addEventListener('click', e=>{
     const pop = document.getElementById('statusPopup');
