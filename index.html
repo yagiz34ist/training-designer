@@ -926,7 +926,7 @@ function toast(msg){
   toast._t=setTimeout(()=>t.classList.remove('show'),2200);
 }
 
-const APP_VERSION = 'v2026.10.28-1';   // bump on every release
+const APP_VERSION = 'v2026.10.28-2';   // bump on every release
 const LS_PREFIX = 'mgspanel:';
 function hasCloudStorage(){
   return typeof window.storage !== 'undefined' && window.storage && typeof window.storage.set === 'function' && typeof window.storage.get === 'function';
@@ -5353,7 +5353,16 @@ function openTextEditModal(tid, isNew){
   // Text plates use exactly the bib colours (same list, same tones), so a
   // label can match the team/vest it refers to. Older texts keep whatever
   // plate colour they were saved with.
-  const BG_CHOICES = [{label:'Yok', val:'none'}].concat(BIB_COLORS.map(bc=>({label:bc.name, val:bc.hex})));
+  // Plus the "no bib" green: an un-bibbed player wears his team colour, so
+  // that exact tone is offered too (default green, and each team's own colour
+  // when it differs).
+  const BG_CHOICES = [{label:'Yok', val:'none'}, {label:'Yeşil', val:'#3fae6c'}]
+    .concat(BIB_COLORS.map(bc=>({label:bc.name, val:bc.hex})));
+  (state.teams||[]).forEach(tm=>{
+    const hex = String(tm.color||'').toLowerCase();
+    if(/^#[0-9a-f]{6}$/.test(hex) && !BG_CHOICES.some(x=>x.val.toLowerCase()===hex))
+      BG_CHOICES.push({label: tm.name||'Takım', val: hex});
+  });
   const colorSw = DRAW_COLORS.map(c=>`<button type="button" class="bib-swatch tx-color-sw" data-c="${c}" style="background:${c};${c===t.color?'box-shadow:0 0 0 2px var(--amber);':''}"></button>`).join('');
   const bgSw = BG_CHOICES.map(b=>`<button type="button" class="btn small tx-bg-btn" data-bg="${b.val}" style="${b.val===t.bg?'border-color:var(--grass);color:var(--grass);':''}">${b.val!=='none'?`<span style="display:inline-block;width:11px;height:11px;border-radius:3px;background:${b.val};border:1px solid rgba(0,0,0,.25);margin-right:5px;vertical-align:-1px;"></span>`:''}${b.label}</button>`).join('');
   openModal('Yazı', `
