@@ -926,7 +926,7 @@ function toast(msg){
   toast._t=setTimeout(()=>t.classList.remove('show'),2200);
 }
 
-const APP_VERSION = 'v2026.10.16-1';   // bump on every release
+const APP_VERSION = 'v2026.10.28-1';   // bump on every release
 const LS_PREFIX = 'mgspanel:';
 function hasCloudStorage(){
   return typeof window.storage !== 'undefined' && window.storage && typeof window.storage.set === 'function' && typeof window.storage.get === 'function';
@@ -5350,16 +5350,12 @@ function bumpEqSize(delta){
 function openTextEditModal(tid, isNew){
   const t = findTextObj(tid);
   if(!t) return;
-  const BG_CHOICES = [
-    {label:'Yok', val:'none'},
-    {label:'Beyaz', val:'#ffffff'},
-    {label:'Siyah', val:'#111111'},
-    {label:'Sarı', val:'#f2d92e'},
-    {label:'Yeşil', val:'#3fae6c'},
-    {label:'Kırmızı', val:'#d92e2e'}
-  ];
+  // Text plates use exactly the bib colours (same list, same tones), so a
+  // label can match the team/vest it refers to. Older texts keep whatever
+  // plate colour they were saved with.
+  const BG_CHOICES = [{label:'Yok', val:'none'}].concat(BIB_COLORS.map(bc=>({label:bc.name, val:bc.hex})));
   const colorSw = DRAW_COLORS.map(c=>`<button type="button" class="bib-swatch tx-color-sw" data-c="${c}" style="background:${c};${c===t.color?'box-shadow:0 0 0 2px var(--amber);':''}"></button>`).join('');
-  const bgSw = BG_CHOICES.map(b=>`<button type="button" class="btn small tx-bg-btn" data-bg="${b.val}" style="${b.val===t.bg?'border-color:var(--grass);color:var(--grass);':''}">${b.label}</button>`).join('');
+  const bgSw = BG_CHOICES.map(b=>`<button type="button" class="btn small tx-bg-btn" data-bg="${b.val}" style="${b.val===t.bg?'border-color:var(--grass);color:var(--grass);':''}">${b.val!=='none'?`<span style="display:inline-block;width:11px;height:11px;border-radius:3px;background:${b.val};border:1px solid rgba(0,0,0,.25);margin-right:5px;vertical-align:-1px;"></span>`:''}${b.label}</button>`).join('');
   openModal('Yazı', `
     <label style="display:block;font-size:11px;color:#6b6f63;margin-bottom:4px;">Metin</label>
     <textarea id="txText" rows="3" style="width:100%;padding:8px;border:1px solid #e4e0d2;border-radius:6px;font-size:13px;box-sizing:border-box;resize:vertical;">${escapeHtml(t.text||'')}</textarea>
