@@ -122,6 +122,12 @@ input,select,textarea{font-family:'Work Sans',sans-serif;}
 .sess-btn{border:none;background:transparent;color:var(--chalk);padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer;opacity:.6;}
 .sess-btn.active{background:rgba(74,143,226,.22);color:#9cc3ff;opacity:1;}
 .archive-theme{font-size:12px;color:#6b6f63;}
+.archive-month{border:1px solid #e4e0d2;border-radius:8px;background:#faf8f1;flex-shrink:0;}
+.archive-month>summary{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;cursor:pointer;font-weight:700;font-size:13px;color:var(--ink);list-style:none;}
+.archive-month>summary::-webkit-details-marker{display:none;}
+.archive-month[open]>summary{border-bottom:1px solid #e4e0d2;}
+.archive-month-count{font-family:'JetBrains Mono';font-size:11px;color:#6b6f63;font-weight:400;}
+.archive-month-list{display:flex;flex-direction:column;gap:6px;padding:8px;}
 
 /* ===== Antrenman Programı — A4 Print Layout ===== */
 .pp-no-print{}
@@ -150,6 +156,8 @@ input,select,textarea{font-family:'Work Sans',sans-serif;}
 .pp-player-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;}
 .pp-status-wrap{display:flex;align-items:center;gap:2px;flex-shrink:0;}
 .pp-status-note{color:#d92e2e;font-weight:800;font-size:8.5px;white-space:nowrap;}
+.pp-status-note.st-izinli{color:#2e6ff2;}
+.pp-status-note.st-rejenerasyon{color:#2e9a5c;}
 .pp-status-btn{background:none;border:none;color:#a3a39a;font-size:10px;cursor:pointer;padding:1px 2px;line-height:1;flex-shrink:0;}
 .pp-status-btn:hover{color:var(--pt1);}
 
@@ -458,7 +466,7 @@ input,select,textarea{font-family:'Work Sans',sans-serif;}
 .icon-btn{background:none;border:none;color:var(--chalk);opacity:0.5;font-size:13px;padding:2px 4px;}
 .icon-btn:hover{opacity:1;color:var(--amber);}
 .drawing-list{display:none;padding:4px 6px 8px;}
-.folder.open .drawing-list{display:block;}
+.folder.open > .drawing-list{display:block;}
 .drawing-item{display:flex;justify-content:space-between;align-items:flex-start;gap:6px;font-size:12.5px;padding:7px 8px;border-radius:6px;color:var(--chalk);opacity:0.85;}
 .drawing-item:hover{background:rgba(63,174,108,0.12);opacity:1;}
 .drawing-item.active{background:rgba(63,174,108,0.22);opacity:1;}
@@ -826,9 +834,9 @@ input,select,textarea{font-family:'Work Sans',sans-serif;}
 
 <div class="bib-popup" id="statusPopup" style="width:130px;">
   <div class="bib-popup-title">Durum</div>
-  <button class="bib-none-btn" id="statusInjuredBtn" style="color:#b34747;border-color:rgba(179,71,71,.4);">🔴 Sakat</button>
-  <button class="bib-none-btn" id="statusLeaveBtn" style="color:#a9761f;border-color:rgba(169,118,31,.4);">🟠 İzinli</button>
-  <button class="bib-none-btn" id="statusRegenBtn" style="color:#2f6f9f;border-color:rgba(47,111,159,.4);">🔵 Rejenerasyon</button>
+  <button class="bib-none-btn" id="statusInjuredBtn" style="color:#d92e2e;border-color:rgba(217,46,46,.4);">🔴 Sakat</button>
+  <button class="bib-none-btn" id="statusLeaveBtn" style="color:#2e6ff2;border-color:rgba(46,111,242,.4);">🔵 İzinli</button>
+  <button class="bib-none-btn" id="statusRegenBtn" style="color:#2e9a5c;border-color:rgba(46,154,92,.4);">🟢 Rejenerasyon</button>
   <button class="bib-none-btn" id="statusClearBtn">Temizle</button>
 </div>
 
@@ -926,7 +934,7 @@ function toast(msg){
   toast._t=setTimeout(()=>t.classList.remove('show'),2200);
 }
 
-const APP_VERSION = 'v2026.10.28-2';   // bump on every release
+const APP_VERSION = 'v2026.11.11-1';   // bump on every release
 const LS_PREFIX = 'mgspanel:';
 function hasCloudStorage(){
   return typeof window.storage !== 'undefined' && window.storage && typeof window.storage.set === 'function' && typeof window.storage.get === 'function';
@@ -1874,7 +1882,7 @@ const EQUIPMENT_TYPES = [
 const EQUIPMENT_COLORS = ['#ffffff','#111111','#d92e2e','#e8862e','#f2d92e','#3fae6c','#2e6ff2','#ec5aa8','#8b5cf6','#8a8f89'];
 /* Types that should drop in smaller than the standard 1.0 scale. 0.7 equals
    two clicks down on the size stepper (which moves in 0.15 steps). */
-const EQ_DEFAULT_SCALE = { top:0.7, huni:0.7, antrenor:0.85 };
+const EQ_DEFAULT_SCALE = { top:0.55, huni:0.7, antrenor:0.7 };
 const DRAW_COLORS = ['#f5f2e8','#111111','#d95757','#e2a53d','#f2d92e','#3fae6c','#14b8a6','#4a8fe2','#2e3fb5','#8b5cf6','#ec5aa8','#8a8f89'];
 const ROTATABLE_EQ_TYPES = ['kale','minikale','baraj','pole'];
 const BIB_COLORS = [
@@ -2230,7 +2238,7 @@ function renderRosterPrint(){
   wrap.innerHTML = groups.filter(g=>g.players.length).map(g=>{
     const cells = g.players.map(p=>{
       const st = status[p.id];
-      const noteHtml = st ? `<span class="pp-status-note">${st==='sakat'?'SK':(st==='rejenerasyon'?'RJ':'İZ')}</span>` : '';
+      const noteHtml = st ? `<span class="pp-status-note st-${st}">${st==='sakat'?'SK':(st==='rejenerasyon'?'RJ':'İZ')}</span>` : '';
       const numHtml = p.number ? ` <span style="opacity:.5;font-size:8.5px;">#${escapeHtml(p.number)}</span>` : '';
       const gkClass = p.mevki==='GK' ? ' gk' : '';
       return `<div class="pp-player-cell${gkClass}">
@@ -2867,7 +2875,7 @@ function openArchiveModal(){
     openModal('Arşiv', '<div class="empty-hint">Henüz arşive kaydedilmiş bir program yok. "Arşive Kaydet" ile ilk kaydını oluşturabilirsin.</div>', async ()=>{});
     return;
   }
-  const rows = sorted.map(p=>{
+  const rowHtml = p=>{
     const d = new Date(p.date+'T00:00:00');
     const label = `${pad2(d.getDate())} ${MONTHS_TR[d.getMonth()]} ${d.getFullYear()} — ${WEEKDAYS_TR[d.getDay()]}`;
     const sessTag = p.session==='pm' ? ' · Akşam' : (isDoubleDay(p.date) ? ' · Sabah' : '');
@@ -2875,6 +2883,23 @@ function openArchiveModal(){
       <span class="archive-date">${label}${sessTag}</span>
       <span class="archive-theme">${escapeHtml(p.taktikselTema||'')}</span>
     </div>`;
+  };
+  // Grouped into one folder per month (newest first); only the newest month
+  // opens by default, the rest open on a tap.
+  const groups = [];
+  sorted.forEach(p=>{
+    const key = String(p.date).slice(0,7);
+    let g = groups[groups.length-1];
+    if(!g || g.key!==key){ g = {key, items:[]}; groups.push(g); }
+    g.items.push(p);
+  });
+  const rows = groups.map((g,gi)=>{
+    const [yy,mm] = g.key.split('-');
+    const title = `${MONTHS_TR[(+mm)-1]||g.key} ${yy}`;
+    return `<details class="archive-month"${gi===0?' open':''}>
+      <summary><span>📁 ${escapeHtml(title)}</span><span class="archive-month-count">${g.items.length}</span></summary>
+      <div class="archive-month-list">${g.items.map(rowHtml).join('')}</div>
+    </details>`;
   }).join('');
   openModal('Arşiv — Kayıtlı Günlük Programlar', `<div class="archive-list">${rows}</div>`, async ()=>{});
   document.querySelectorAll('.archive-row').forEach(row=>{
