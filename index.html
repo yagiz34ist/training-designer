@@ -577,6 +577,9 @@ input,select,textarea{font-family:'Work Sans',sans-serif;}
 .eq-size-row{display:flex;align-items:center;justify-content:space-between;gap:6px;}
 .eq-size-btn{width:30px;height:30px;border-radius:6px;border:1px solid #d9d5c5;background:#fff;color:var(--ink);font-size:15px;cursor:pointer;line-height:1;}
 .eq-size-btn:hover{border-color:var(--grass-deep);color:var(--grass-deep);}
+.tok-size{display:flex;align-items:center;gap:5px;font-size:12px;}
+.tok-size .eq-size-btn{width:32px;height:32px;font-size:16px;touch-action:manipulation;}
+.tok-size-label{font-family:'JetBrains Mono';font-size:12px;min-width:40px;text-align:center;}
 #eqSizeLabel{font-family:'JetBrains Mono';font-size:12px;color:#555;}
 
 .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,0.55);display:none;align-items:center;justify-content:center;z-index:60;}
@@ -727,11 +730,13 @@ input,select,textarea{font-family:'Work Sans',sans-serif;}
         <div class="sep"></div>
         <button class="btn small" id="pitchMenuOpenBtn">⚙ Saha</button>
         <div class="sep"></div>
-        <label style="font-size:12px;display:flex;align-items:center;gap:6px;" title="Oyuncu yuvarlaklarının boyutu">
-          <span style="opacity:.7;font-size:10px;">👤</span>
-          <input type="range" id="tokenSizeSlider" min="0.3" max="1.7" step="0.05" value="1" style="width:90px;accent-color:var(--amber);">
-          <span style="opacity:.7;font-size:19px;">👤</span>
-        </label>
+        <div class="tok-size" title="Oyuncu yuvarlaklarının boyutu">
+          <span style="opacity:.7;font-size:13px;">👤</span>
+          <button type="button" class="eq-size-btn" id="tokenSizeMinus" title="Küçült">－</button>
+          <span id="tokenSizeLabel" class="tok-size-label">100%</span>
+          <button type="button" class="eq-size-btn" id="tokenSizePlus" title="Büyüt">＋</button>
+          <input type="range" id="tokenSizeSlider" min="0.3" max="1.7" step="0.05" value="1" style="display:none;">
+        </div>
         <div class="sep"></div>
         <label style="font-size:12px;display:flex;align-items:center;gap:6px;" title="Oyuncu yuvarlağında ne gösterilsin">
           <span style="opacity:.7;">Etiket:</span>
@@ -934,7 +939,7 @@ function toast(msg){
   toast._t=setTimeout(()=>t.classList.remove('show'),2200);
 }
 
-const APP_VERSION = 'v2026.11.11-1';   // bump on every release
+const APP_VERSION = 'v2026.11.12-1';   // bump on every release
 const LS_PREFIX = 'mgspanel:';
 function hasCloudStorage(){
   return typeof window.storage !== 'undefined' && window.storage && typeof window.storage.set === 'function' && typeof window.storage.get === 'function';
@@ -1873,8 +1878,8 @@ const EQUIPMENT_TYPES = [
   {type:'top', label:'Top', defaultColor:'#ffffff'},
   {type:'huni', label:'Huni', defaultColor:'#e8862e'},
   {type:'baraj', label:'Baraj', defaultColor:'#d92e2e'},
-  {type:'minikale', label:'Minyatür', defaultColor:'#ffffff'},
-  {type:'kale', label:'Kale', defaultColor:'#ffffff'},
+  {type:'minikale', label:'Minyatür', defaultColor:'#111111'},
+  {type:'kale', label:'Kale', defaultColor:'#111111'},
   {type:'tabak', label:'Tabak', defaultColor:'#e8862e'},
   {type:'dikme', label:'Bayrak', defaultColor:'#d92e2e'},
   {type:'pole', label:'Dikme', defaultColor:'#e8862e'}
@@ -1949,7 +1954,7 @@ async function init(){
   const savedTheme = await storeGet('printTheme', null);
   if(savedTheme && savedTheme.c1 && savedTheme.c2) state.printTheme = savedTheme;
   const savedScale = await storeGet('tokenScale', null);
-  if(savedScale){ state.tokenScale = savedScale; document.getElementById('tokenSizeSlider').value = savedScale; }
+  if(savedScale){ state.tokenScale = savedScale; document.getElementById('tokenSizeSlider').value = savedScale; syncTokenSizeLabel(savedScale); }
   state.teams = await storeGet('teams', []);
   state.roster = await storeGet('roster', []);
 
@@ -4175,6 +4180,7 @@ function refreshPitchVisual(){
   if(tsSel) tsSel.value = d.tokenStyle || 'full';
   const sizeSlider = document.getElementById('tokenSizeSlider');
   if(sizeSlider) sizeSlider.value = d.tokenScale != null ? d.tokenScale : 1;
+  syncTokenSizeLabel(d.tokenScale != null ? d.tokenScale : 1);
 }
 
 /* ---- Drawing model ---- */
@@ -4244,6 +4250,10 @@ function resolvePosition(pid){
   return state.currentDrawing.positions[pid] || {x:350,y:225};
 }
 
+function syncTokenSizeLabel(v){
+  const el = document.getElementById('tokenSizeLabel');
+  if(el) el.textContent = Math.round((v!=null?v:1)*100)+'%';
+}
 function renderBoard(){
   const tokensLayer = document.getElementById('tokensLayer');
   const arrowsLayer = document.getElementById('arrowsLayer');
@@ -6228,8 +6238,19 @@ function bindEvents(){
     renderBoard();
     toast('Tüm çizimler silindi ✓');
   });
+  const bumpTokenSize = delta=>{
+    const sl = document.getElementById('tokenSizeSlider');
+    const cur = parseFloat(sl.value) || 1;
+    const next = Math.min(1.7, Math.max(0.3, Math.round((cur+delta)*100)/100));
+    if(next===cur) return;
+    sl.value = next;
+    sl.dispatchEvent(new Event('input'));
+  };
+  document.getElementById('tokenSizeMinus').addEventListener('click', ()=>bumpTokenSize(-0.05));
+  document.getElementById('tokenSizePlus').addEventListener('click', ()=>bumpTokenSize(0.05));
   document.getElementById('tokenSizeSlider').addEventListener('input', e=>{
     const val = parseFloat(e.target.value);
+    syncTokenSizeLabel(val);
     // Stored per drawing; state.tokenScale only survives as the seed value
     // for the next new drawing.
     state.tokenScale = val;
